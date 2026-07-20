@@ -1,0 +1,21 @@
+{
+  "name": "@zayjar/backoffice",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3001",
+    "build": "next build",
+    "start": "next start -p 3001",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@zayjar/types": "workspace:*",
+    "next": "^14.2.3",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.17",
+    "typescript": "^5.4.5"
+  }
+}

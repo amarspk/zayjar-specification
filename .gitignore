@@ -1,0 +1,13 @@
+node_modules
+dist
+.next
+.cache
+.config
+.npm
+.npm-global
+.npmrc
+.local
+uploads
+.turbo
+*.log
+.env

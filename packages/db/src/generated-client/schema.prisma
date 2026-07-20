@@ -1,0 +1,660 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated-client"
+}
+
+// ==========================================
+// 1. ENUMERATION TYPES DEFINITIONS
+// ==========================================
+
+enum TenantStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  UNPAID
+  CANCELED
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  UNPAID
+  CANCELED
+}
+
+enum TableStatus {
+  VACANT
+  OCCUPIED
+  RESERVED
+  DIRTY
+}
+
+enum OrderType {
+  DINE_IN
+  TAKE_AWAY
+  DELIVERY
+}
+
+enum OrderStatus {
+  DRAFT
+  PENDING
+  ACCEPTED
+  PREPARING
+  READY
+  COMPLETED
+  CANCELLED
+}
+
+enum CookingStatus {
+  PENDING
+  PREPARING
+  COOKED
+  SERVED
+}
+
+enum PaymentMethodType {
+  CASH
+  CREDIT_CARD
+  APPLE_PAY
+  LOCAL_WALLET
+}
+
+enum PaymentStatus {
+  PENDING
+  AUTHORIZED
+  PAID
+  FAILED
+  REFUNDED
+}
+
+// ==========================================
+// 2. MODEL DEFINITIONS (ALL 29 MODELS)
+// ==========================================
+
+model Tenant {
+  id               String       @id @default(uuid()) @db.Uuid
+  name             String       @db.VarChar(255)
+  subdomain        String       @db.VarChar(63)
+  customDomain     String?      @db.VarChar(255)
+  status           TenantStatus @default(TRIALING)
+  logoUrl          String?      @db.VarChar(2048)
+  bannerUrl        String?      @db.VarChar(2048)
+  primaryColor     String       @default("#000000") @db.VarChar(7)
+  secondaryColor   String       @default("#FFFFFF") @db.VarChar(7)
+  stripeCustomerId String?      @db.VarChar(255)
+  createdAt        DateTime     @default(now()) @db.Timestamptz
+  updatedAt        DateTime     @updatedAt @db.Timestamptz
+  deletedAt        DateTime?    @db.Timestamptz
+
+  // Relations
+  subscriptions   Subscription?
+  users           User[]
+  roles           Role[]
+  restaurants     Restaurant[]
+  branches        Branch[]
+  tables          Table[]
+  categories      Category[]
+  products        Product[]
+  productSizes    ProductSize[]
+  productVariants ProductVariant[]
+  productAddons   ProductAddon[]
+  addonItems      AddonItem[]
+  orders          Order[]
+  orderItems      OrderItem[]
+  orderItemAddons OrderItemAddon[]
+  customers       Customer[]
+  payments        Payment[]
+  invoices        Invoice[]
+  deviceTokens    DeviceToken[]
+  kitchenQueues   KitchenQueue[]
+  sessionLogs     SessionLog[]
+  webhooks        Webhook[]
+
+  @@unique([subdomain], map: "idx_tenants_subdomain")
+  @@unique([customDomain], map: "idx_tenants_custom_domain")
+  @@index([stripeCustomerId], map: "idx_tenants_stripe_customer")
+  @@map("tenants")
+}
+
+model SubscriptionPlan {
+  id                   String    @id @default(uuid()) @db.Uuid
+  name                 String    @db.VarChar(100)
+  stripePriceId        String    @db.VarChar(255)
+  maxBranches          Int       @default(1)
+  maxRestaurants       Int       @default(1)
+  maxProductsPerBranch Int       @default(100)
+  allowCustomDomains   Boolean   @default(false)
+  allowOnlinePayments  Boolean   @default(false)
+  allowAnalytics       Boolean   @default(false)
+  priceMonthly         Decimal   @db.Decimal(10, 2)
+  priceYearly          Decimal   @db.Decimal(10, 2)
+  createdAt            DateTime  @default(now()) @db.Timestamptz
+  updatedAt            DateTime  @updatedAt @db.Timestamptz
+  deletedAt            DateTime? @db.Timestamptz
+
+  subscriptions Subscription[]
+
+  @@unique([stripePriceId], map: "idx_sub_plans_stripe_id")
+  @@map("subscription_plans")
+}
+
+model Subscription {
+  id                   String             @id @default(uuid()) @db.Uuid
+  tenantId             String             @unique @db.Uuid
+  planId               String             @db.Uuid
+  stripeSubscriptionId String?            @db.VarChar(255)
+  status               SubscriptionStatus @default(TRIALING)
+  trialStart           DateTime?          @db.Timestamptz
+  trialEnd             DateTime?          @db.Timestamptz
+  currentPeriodStart   DateTime           @db.Timestamptz
+  currentPeriodEnd     DateTime           @db.Timestamptz
+  cancelAtPeriodEnd    Boolean            @default(false)
+  canceledAt           DateTime?          @db.Timestamptz
+  createdAt            DateTime           @default(now()) @db.Timestamptz
+  updatedAt            DateTime           @updatedAt @db.Timestamptz
+
+  tenant Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  plan   SubscriptionPlan @relation(fields: [planId], references: [id], onDelete: Restrict)
+
+  @@index([stripeSubscriptionId], map: "idx_subscriptions_stripe_id")
+  @@map("subscriptions")
+}
+
+model User {
+  id           String    @id @default(uuid()) @db.Uuid
+  tenantId     String?   @db.Uuid
+  firstName    String    @db.VarChar(100)
+  lastName     String    @db.VarChar(100)
+  email        String    @db.VarChar(255)
+  passwordHash String    @db.VarChar(255)
+  phoneNumber  String?   @db.VarChar(50)
+  isActive     Boolean   @default(true)
+  mfaSecret    String?   @db.VarChar(128)
+  mfaEnabled   Boolean   @default(false)
+  lastLoginAt  DateTime? @db.Timestamptz
+  createdAt    DateTime  @default(now()) @db.Timestamptz
+  updatedAt    DateTime  @updatedAt @db.Timestamptz
+  deletedAt    DateTime? @db.Timestamptz
+
+  tenant       Tenant?       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userRoles    UserRole[]
+  deviceTokens DeviceToken[]
+  sessionLogs  SessionLog[]
+
+  @@unique([email, tenantId], map: "idx_users_email_tenant")
+  @@index([tenantId], map: "idx_users_tenant_id")
+  @@map("users")
+}
+
+model Role {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String?  @db.Uuid
+  name        String   @db.VarChar(100)
+  displayName String   @db.VarChar(100)
+  description String?  @db.Text
+  createdAt   DateTime @default(now()) @db.Timestamptz
+  updatedAt   DateTime @updatedAt @db.Timestamptz
+
+  tenant          Tenant?          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userRoles       UserRole[]
+  rolePermissions RolePermission[]
+
+  @@unique([name, tenantId], map: "idx_roles_name_tenant")
+  @@map("roles")
+}
+
+model Permission {
+  id          String   @id @default(uuid()) @db.Uuid
+  action      String   @db.VarChar(50)
+  resource    String   @db.VarChar(100)
+  description String   @db.VarChar(255)
+  createdAt   DateTime @default(now()) @db.Timestamptz
+
+  rolePermissions RolePermission[]
+
+  @@unique([action, resource], map: "idx_permissions_action_resource")
+  @@map("permissions")
+}
+
+model UserRole {
+  userId     String   @db.Uuid
+  roleId     String   @db.Uuid
+  assignedAt DateTime @default(now()) @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@index([roleId], map: "idx_user_roles_role_id")
+  @@map("user_roles")
+}
+
+model RolePermission {
+  roleId       String   @db.Uuid
+  permissionId String   @db.Uuid
+  grantedAt    DateTime @default(now()) @db.Timestamptz
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model Restaurant {
+  id            String    @id @default(uuid()) @db.Uuid
+  tenantId      String    @db.Uuid
+  name          String    @db.VarChar(255)
+  currency      String    @default("USD") @db.VarChar(3)
+  timezone      String    @default("UTC") @db.VarChar(100)
+  taxPercentage Decimal   @default(0.00) @db.Decimal(5, 2)
+  createdAt     DateTime  @default(now()) @db.Timestamptz
+  updatedAt     DateTime  @updatedAt @db.Timestamptz
+  deletedAt     DateTime? @db.Timestamptz
+
+  tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branches   Branch[]
+  categories Category[]
+
+  @@index([tenantId], map: "idx_restaurants_tenant_id")
+  @@map("restaurants")
+}
+
+model Branch {
+  id             String    @id @default(uuid()) @db.Uuid
+  tenantId       String    @db.Uuid
+  restaurantId   String    @db.Uuid
+  name           String    @db.VarChar(100)
+  address        String    @db.Text
+  latitude       Decimal?  @db.Decimal(9, 6)
+  longitude      Decimal?  @db.Decimal(9, 6)
+  phoneNumber    String    @db.VarChar(50)
+  operatingHours Json
+  isActive       Boolean   @default(true)
+  createdAt      DateTime  @default(now()) @db.Timestamptz
+  updatedAt      DateTime  @updatedAt @db.Timestamptz
+  deletedAt      DateTime? @db.Timestamptz
+
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  restaurant    Restaurant     @relation(fields: [restaurantId], references: [id], onDelete: Restrict)
+  tables        Table[]
+  orders        Order[]
+  kitchenQueues KitchenQueue[]
+
+  @@index([tenantId], map: "idx_branches_tenant")
+  @@index([restaurantId], map: "idx_branches_restaurant")
+  @@map("branches")
+}
+
+model Table {
+  id              String      @id @default(uuid()) @db.Uuid
+  tenantId        String      @db.Uuid
+  branchId        String      @db.Uuid
+  number          String      @db.VarChar(20)
+  seatingCapacity Int         @default(4)
+  qrCodeToken     String      @db.VarChar(255)
+  status          TableStatus @default(VACANT)
+  createdAt       DateTime    @default(now()) @db.Timestamptz
+  updatedAt       DateTime    @updatedAt @db.Timestamptz
+  deletedAt       DateTime?   @db.Timestamptz
+
+  tenant Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branch Branch  @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  orders Order[]
+
+  @@unique([qrCodeToken], map: "idx_tables_qr_token")
+  @@index([branchId], map: "idx_tables_branch")
+  @@map("tables")
+}
+
+model Category {
+  id           String    @id @default(uuid()) @db.Uuid
+  tenantId     String    @db.Uuid
+  restaurantId String    @db.Uuid
+  name         String    @db.VarChar(100)
+  sortOrder    Int       @default(0)
+  isActive     Boolean   @default(true)
+  createdAt    DateTime  @default(now()) @db.Timestamptz
+  updatedAt    DateTime  @updatedAt @db.Timestamptz
+  deletedAt    DateTime? @db.Timestamptz
+
+  tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Restrict)
+  products   Product[]
+
+  @@index([restaurantId, sortOrder], map: "idx_categories_restaurant")
+  @@map("categories")
+}
+
+model Product {
+  id              String    @id @default(uuid()) @db.Uuid
+  tenantId        String    @db.Uuid
+  categoryId      String    @db.Uuid
+  name            String    @db.VarChar(255)
+  description     String?   @db.Text
+  imageUrl        String?   @db.VarChar(2048)
+  basePrice       Decimal   @db.Decimal(10, 2)
+  isAvailable     Boolean   @default(true)
+  calories        Int?
+  preparationTime Int       @default(15)
+  createdAt       DateTime  @default(now()) @db.Timestamptz
+  updatedAt       DateTime  @updatedAt @db.Timestamptz
+  deletedAt       DateTime? @db.Timestamptz
+
+  tenant          Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  category        Category         @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  productSizes    ProductSize[]
+  productVariants ProductVariant[]
+  productAddons   ProductAddon[]
+  orderItems      OrderItem[]
+
+  @@index([categoryId], map: "idx_products_category")
+  @@index([basePrice], map: "idx_products_price")
+  @@map("products")
+}
+
+model ProductSize {
+  id              String   @id @default(uuid()) @db.Uuid
+  tenantId        String   @db.Uuid
+  productId       String   @db.Uuid
+  name            String   @db.VarChar(50)
+  priceAdjustment Decimal  @default(0.00) @db.Decimal(10, 2)
+  createdAt       DateTime @default(now()) @db.Timestamptz
+  updatedAt       DateTime @updatedAt @db.Timestamptz
+
+  tenant     Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product    Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  orderItems OrderItem[]
+
+  @@index([productId], map: "idx_product_sizes_prod")
+  @@map("product_sizes")
+}
+
+model ProductVariant {
+  id            String   @id @default(uuid()) @db.Uuid
+  tenantId      String   @db.Uuid
+  productId     String   @db.Uuid
+  sku           String?  @db.VarChar(100)
+  name          String   @db.VarChar(100)
+  price         Decimal  @db.Decimal(10, 2)
+  stockQuantity Int      @default(0)
+  createdAt     DateTime @default(now()) @db.Timestamptz
+  updatedAt     DateTime @updatedAt @db.Timestamptz
+
+  tenant     Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product    Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  orderItems OrderItem[]
+
+  @@unique([sku], map: "idx_product_variants_sku")
+  @@index([productId], map: "idx_product_variants_prod")
+  @@map("product_variants")
+}
+
+model ProductAddon {
+  id            String   @id @default(uuid()) @db.Uuid
+  tenantId      String   @db.Uuid
+  productId     String   @db.Uuid
+  name          String   @db.VarChar(100)
+  minSelections Int      @default(0)
+  maxSelections Int      @default(1)
+  createdAt     DateTime @default(now()) @db.Timestamptz
+  updatedAt     DateTime @updatedAt @db.Timestamptz
+
+  tenant     Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product    Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  addonItems AddonItem[]
+
+  @@index([productId], map: "idx_product_addons_prod")
+  @@map("product_addons")
+}
+
+model AddonItem {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @db.Uuid
+  addonGroupId String   @db.Uuid
+  name         String   @db.VarChar(100)
+  price        Decimal  @default(0.00) @db.Decimal(10, 2)
+  isAvailable  Boolean  @default(true)
+  createdAt    DateTime @default(now()) @db.Timestamptz
+  updatedAt    DateTime @updatedAt @db.Timestamptz
+
+  tenant          Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  addonGroup      ProductAddon     @relation(fields: [addonGroupId], references: [id], onDelete: Cascade)
+  orderItemAddons OrderItemAddon[]
+
+  @@index([addonGroupId], map: "idx_addon_items_group")
+  @@map("addon_items")
+}
+
+model Order {
+  id             String      @id @default(uuid()) @db.Uuid
+  tenantId       String      @db.Uuid
+  branchId       String      @db.Uuid
+  customerId     String?     @db.Uuid
+  tableId        String?     @db.Uuid
+  orderNumber    String      @db.VarChar(50)
+  type           OrderType
+  status         OrderStatus @default(DRAFT)
+  subtotal       Decimal     @db.Decimal(10, 2)
+  taxAmount      Decimal     @db.Decimal(10, 2)
+  discountAmount Decimal     @default(0.00) @db.Decimal(10, 2)
+  tipAmount      Decimal     @default(0.00) @db.Decimal(10, 2)
+  total          Decimal     @db.Decimal(10, 2)
+  specialNotes   String?     @db.Text
+  createdAt      DateTime    @default(now()) @db.Timestamptz
+  updatedAt      DateTime    @updatedAt @db.Timestamptz
+
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branch        Branch         @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  customer      Customer?      @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  table         Table?         @relation(fields: [tableId], references: [id], onDelete: SetNull)
+  orderItems    OrderItem[]
+  payments      Payment[]
+  invoices      Invoice?
+  kitchenQueues KitchenQueue[]
+
+  @@index([tenantId, branchId], map: "idx_orders_tenant_branch")
+  @@index([customerId], map: "idx_orders_customer")
+  @@index([tableId], map: "idx_orders_table")
+  @@index([status], map: "idx_orders_status")
+  @@map("orders")
+}
+
+model OrderItem {
+  id            String        @id @default(uuid()) @db.Uuid
+  tenantId      String        @db.Uuid
+  orderId       String        @db.Uuid
+  productId     String        @db.Uuid
+  variantId     String?       @db.Uuid
+  sizeId        String?       @db.Uuid
+  quantity      Int           @default(1)
+  unitPrice     Decimal       @db.Decimal(10, 2)
+  totalPrice    Decimal       @db.Decimal(10, 2)
+  cookingStatus CookingStatus @default(PENDING)
+  createdAt     DateTime      @default(now()) @db.Timestamptz
+
+  tenant          Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  order           Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product         Product          @relation(fields: [productId], references: [id], onDelete: Restrict)
+  variant         ProductVariant?  @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  size            ProductSize?     @relation(fields: [sizeId], references: [id], onDelete: Restrict)
+  orderItemAddons OrderItemAddon[]
+
+  @@index([orderId], map: "idx_order_items_parent")
+  @@index([productId], map: "idx_order_items_product")
+  @@map("order_items")
+}
+
+model OrderItemAddon {
+  id          String  @id @default(uuid()) @db.Uuid
+  tenantId    String  @db.Uuid
+  orderItemId String  @db.Uuid
+  addonItemId String  @db.Uuid
+  price       Decimal @default(0.00) @db.Decimal(10, 2)
+
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  orderItem OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  addonItem AddonItem @relation(fields: [addonItemId], references: [id], onDelete: Restrict)
+
+  @@index([orderItemId], map: "idx_order_item_addons_item")
+  @@map("order_item_addons")
+}
+
+model Customer {
+  id            String    @id @default(uuid()) @db.Uuid
+  tenantId      String    @db.Uuid
+  firstName     String    @db.VarChar(100)
+  lastName      String    @db.VarChar(100)
+  email         String    @db.VarChar(255)
+  phoneNumber   String?   @db.VarChar(50)
+  loyaltyPoints Int       @default(0)
+  createdAt     DateTime  @default(now()) @db.Timestamptz
+  updatedAt     DateTime  @updatedAt @db.Timestamptz
+  deletedAt     DateTime? @db.Timestamptz
+
+  tenant Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  orders Order[]
+
+  @@unique([email, tenantId], map: "idx_customers_email_tenant")
+  @@map("customers")
+}
+
+model Payment {
+  id                   String            @id @default(uuid()) @db.Uuid
+  tenantId             String            @db.Uuid
+  orderId              String            @db.Uuid
+  paymentMethod        PaymentMethodType
+  status               PaymentStatus     @default(PENDING)
+  amount               Decimal           @db.Decimal(10, 2)
+  transactionReference String?           @db.VarChar(255)
+  completedAt          DateTime?         @db.Timestamptz
+  createdAt            DateTime          @default(now()) @db.Timestamptz
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  order  Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId], map: "idx_payments_order")
+  @@index([transactionReference], map: "idx_payments_reference")
+  @@map("payments")
+}
+
+model Invoice {
+  id            String   @id @default(uuid()) @db.Uuid
+  tenantId      String   @db.Uuid
+  orderId       String   @unique @db.Uuid
+  invoiceNumber String   @db.VarChar(100)
+  pdfUrl        String   @db.VarChar(2048)
+  createdAt     DateTime @default(now()) @db.Timestamptz
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  order  Order  @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  @@unique([invoiceNumber], map: "idx_invoices_number")
+  @@map("invoices")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  tenantId   String?  @db.Uuid
+  userId     String?  @db.Uuid
+  action     String   @db.VarChar(100)
+  entityName String   @db.VarChar(100)
+  entityId   String?  @db.Uuid
+  oldValues  Json?
+  newValues  Json?
+  ipAddress  String   @db.VarChar(45)
+  userAgent  String   @db.VarChar(512)
+  createdAt  DateTime @default(now()) @db.Timestamptz
+
+  @@index([tenantId, userId], map: "idx_audit_logs_tenant_user")
+  @@index([createdAt(sort: Desc)], map: "idx_audit_logs_created")
+  @@map("audit_logs")
+}
+
+model DeviceToken {
+  id         String   @id @default(uuid()) @db.Uuid
+  tenantId   String   @db.Uuid
+  userId     String   @db.Uuid
+  token      String   @db.VarChar(512)
+  deviceType String   @db.VarChar(50)
+  createdAt  DateTime @default(now()) @db.Timestamptz
+  updatedAt  DateTime @updatedAt @db.Timestamptz
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([token], map: "idx_device_tokens_val")
+  @@index([userId], map: "idx_device_tokens_user")
+  @@map("device_tokens")
+}
+
+model KitchenQueue {
+  id                 String    @id @default(uuid()) @db.Uuid
+  tenantId           String    @db.Uuid
+  branchId           String    @db.Uuid
+  orderId            String    @db.Uuid
+  ticketNumber       String    @db.VarChar(50)
+  priority           String    @default("NORMAL") @db.VarChar(20)
+  startedCookingAt   DateTime? @db.Timestamptz
+  completedCookingAt DateTime? @db.Timestamptz
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branch Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  order  Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([branchId], map: "idx_kitchen_queues_branch")
+  @@map("kitchen_queues")
+}
+
+model SessionLog {
+  id               String   @id @default(uuid()) @db.Uuid
+  tenantId         String?  @db.Uuid
+  userId           String   @db.Uuid
+  refreshTokenHash String   @db.VarChar(255)
+  expiresAt        DateTime @db.Timestamptz
+  isRevoked        Boolean  @default(false)
+  createdAt        DateTime @default(now()) @db.Timestamptz
+
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([refreshTokenHash], map: "idx_session_logs_hash")
+  @@index([userId], map: "idx_session_logs_user")
+  @@map("session_logs")
+}
+
+model Notification {
+  id            String   @id @default(uuid()) @db.Uuid
+  tenantId      String   @db.Uuid
+  recipientType String   @db.VarChar(50)
+  recipientId   String   @db.Uuid
+  title         String   @db.VarChar(255)
+  body          String   @db.Text
+  type          String   @db.VarChar(50)
+  isRead        Boolean  @default(false)
+  createdAt     DateTime @default(now()) @db.Timestamptz
+
+  @@index([recipientId, isRead], map: "idx_notifications_recipient")
+  @@map("notifications")
+}
+
+model Webhook {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @db.Uuid
+  targetUrl String   @db.VarChar(2048)
+  secretKey String   @db.VarChar(255)
+  events    String[] @db.VarChar(50)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now()) @db.Timestamptz
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId], map: "idx_webhooks_tenant")
+  @@map("webhooks")
+}
