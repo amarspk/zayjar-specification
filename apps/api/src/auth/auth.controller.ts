@@ -6,6 +6,7 @@ import { Public } from './decorators/public.decorator';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { LoginDto } from '@zayjar/types';
+import { MfaVerifyRequestDto } from './dto/mfa-verify-request.dto';
 
 @Controller('api/v1/auth')
 export class AuthController {
@@ -116,5 +117,21 @@ export class AuthController {
         mfaEnabled: (profile as any).mfaEnabled || false,
       },
     };
+  }
+
+  @Post('mfa/enable')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  async enableMfa(@CurrentUser() user: any) {
+    const result = await this.authService.generateMfaSecret(user.id, user.tenantId, user.email);
+    return result;
+  }
+
+  @Post('mfa/verify')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  async verifyMfa(@CurrentUser() user: any, @Body() dto: MfaVerifyRequestDto) {
+    const result = await this.authService.verifyMfaSetup(user.id, user.tenantId, dto.mfaToken);
+    return result;
   }
 }
