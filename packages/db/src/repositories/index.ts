@@ -11,3 +11,4 @@ export * from './TenantAddonItemRepository';
 export * from './TenantOrderItemRepository';
 export * from './TenantInvoiceRepository';
 export * from './TenantRestaurantRepository';
+export * from './TenantCustomerRepository';
