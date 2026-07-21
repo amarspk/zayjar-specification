@@ -1,7 +1,11 @@
-import { Controller, Post, Body, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Post, Get, Put, Body, Param, Req, HttpCode, HttpStatus, UseGuards } from '@nestjs/common';
 import { TenantService } from './tenant.service';
 import { CreateTenantRequestDto } from './dto/create-tenant-request.dto';
+import { UpdateTenantRequestDto } from './dto/update-tenant-request.dto';
 import { Public } from '../auth/decorators/public.decorator';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RbacPermissionGuard } from '../auth/guards/rbac-permission.guard';
+import { RequirePermission } from '../auth/decorators/require-permission.decorator';
 
 @Controller('api/v1/tenants')
 export class TenantController {
@@ -12,5 +16,22 @@ export class TenantController {
   @HttpCode(HttpStatus.CREATED)
   async onboard(@Body() dto: CreateTenantRequestDto) {
     return this.tenantService.onboard(dto);
+  }
+
+  @Get(':id')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  async getTenant(@Param('id') id: string, @Req() req: any) {
+    const requester = req.user ? { tenantId: req.user.tenantId, roles: req.user.roles } : undefined;
+    return this.tenantService.getTenantById(id, requester);
+  }
+
+  @Put(':id')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard, RbacPermissionGuard)
+  @RequirePermission('update', 'Tenant')
+  async updateTenant(@Param('id') id: string, @Body() dto: UpdateTenantRequestDto, @Req() req: any) {
+    const requester = req.user ? { tenantId: req.user.tenantId, roles: req.user.roles } : undefined;
+    return this.tenantService.updateTenant(id, dto, requester);
   }
 }

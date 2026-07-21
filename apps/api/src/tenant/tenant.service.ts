@@ -1,5 +1,6 @@
-import { Injectable, ConflictException, Logger } from '@nestjs/common';
+import { Injectable, ConflictException, Logger, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { CreateTenantRequestDto } from './dto/create-tenant-request.dto';
+import { UpdateTenantRequestDto } from './dto/update-tenant-request.dto';
 import { AuthService } from '../auth/auth.service';
 import { prisma } from '@zayjar/db';
 
@@ -123,5 +124,101 @@ export class TenantService {
         }
       };
     });
+  }
+
+  /**
+   * Returns tenant branding and profile per DOC-003 3.3.2
+   * Public read allowed, but if authenticated user is not PLATFORM_OWNER, enforce tenant isolation
+   */
+  async getTenantById(id: string, requester?: { tenantId?: string | null; roles?: string[] }) {
+    const tenant = await prisma.tenant.findUnique({
+      where: { id },
+    });
+
+    if (!tenant) {
+      throw new NotFoundException(`Tenant with ID [${id}] not found.`);
+    }
+
+    // Enforce isolation for non-platform owners
+    if (requester && requester.tenantId && !requester.roles?.includes('PLATFORM_OWNER')) {
+      if (requester.tenantId !== id) {
+        throw new ForbiddenException('Access denied: Cannot access another tenant context');
+      }
+    }
+
+    return {
+      id: tenant.id,
+      name: tenant.name,
+      subdomain: tenant.subdomain,
+      customDomain: tenant.customDomain,
+      status: tenant.status,
+      branding: {
+        logoUrl: tenant.logoUrl,
+        bannerUrl: tenant.bannerUrl,
+        primaryColor: tenant.primaryColor,
+        secondaryColor: tenant.secondaryColor,
+      },
+    };
+  }
+
+  /**
+   * Modifies tenant branding per DOC-003 3.3.3
+   * Requires RESTAURANT_OWNER, tenant isolation enforced
+   */
+  async updateTenant(id: string, dto: UpdateTenantRequestDto, requester?: { tenantId?: string | null; roles?: string[] }) {
+    const existing = await prisma.tenant.findUnique({
+      where: { id },
+    });
+
+    if (!existing) {
+      throw new NotFoundException(`Tenant with ID [${id}] not found.`);
+    }
+
+    // Enforce tenant isolation: requester must belong to same tenant unless platform owner
+    if (requester && requester.tenantId && !requester.roles?.includes('PLATFORM_OWNER')) {
+      if (requester.tenantId !== id) {
+        throw new ForbiddenException('Access denied: Cannot modify another tenant');
+      }
+    }
+
+    // If customDomain provided, ensure uniqueness
+    if (dto.customDomain) {
+      const domainConflict = await prisma.tenant.findUnique({
+        where: { customDomain: dto.customDomain },
+      });
+      if (domainConflict && domainConflict.id !== id) {
+        throw new ConflictException(`Custom domain [${dto.customDomain}] is already registered.`);
+      }
+    }
+
+    const data: any = {};
+    if (dto.name) data.name = dto.name;
+    if (dto.customDomain !== undefined) data.customDomain = dto.customDomain;
+    if (dto.branding) {
+      if (dto.branding.logoUrl !== undefined) data.logoUrl = dto.branding.logoUrl;
+      if (dto.branding.bannerUrl !== undefined) data.bannerUrl = dto.branding.bannerUrl;
+      if (dto.branding.primaryColor !== undefined) data.primaryColor = dto.branding.primaryColor;
+      if (dto.branding.secondaryColor !== undefined) data.secondaryColor = dto.branding.secondaryColor;
+    }
+
+    const updated = await prisma.tenant.update({
+      where: { id },
+      data,
+    });
+
+    return {
+      id: updated.id,
+      name: updated.name,
+      subdomain: updated.subdomain,
+      customDomain: updated.customDomain,
+      status: updated.status,
+      branding: {
+        logoUrl: updated.logoUrl,
+        bannerUrl: updated.bannerUrl,
+        primaryColor: updated.primaryColor,
+        secondaryColor: updated.secondaryColor,
+      },
+      updatedAt: updated.updatedAt,
+    };
   }
 }
