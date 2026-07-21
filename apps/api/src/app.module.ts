@@ -11,10 +11,11 @@ import { BillingModule } from './billing/billing.module';
 import { AdminModule } from './admin/admin.module';
 import { AssetModule } from './asset/asset.module';
 import { WebhookModule } from './webhook/webhook.module';
+import { DeviceTokenModule } from './device-token/device-token.module';
 import { TenantContextMiddleware } from './common/middleware/tenant-context.middleware';
 
 @Module({
-  imports: [CacheModule, AuthModule, TenantModule, BranchModule, MenuModule, OrderModule, KdsModule, CustomerModule, BillingModule, AdminModule, AssetModule, WebhookModule],
+  imports: [CacheModule, AuthModule, TenantModule, BranchModule, MenuModule, OrderModule, KdsModule, CustomerModule, BillingModule, AdminModule, AssetModule, WebhookModule, DeviceTokenModule],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
