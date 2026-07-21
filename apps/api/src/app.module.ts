@@ -1,8 +1,18 @@
-import { Module } from '@nestjs/common';
+import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
 import { CacheModule } from './common/cache/cache.module';
 import { AuthModule } from './auth/auth.module';
+import { TenantModule } from './tenant/tenant.module';
+import { BranchModule } from './branch/branch.module';
+import { MenuModule } from './menu/menu.module';
+import { TenantContextMiddleware } from './common/middleware/tenant-context.middleware';
 
 @Module({
-  imports: [CacheModule, AuthModule],
+  imports: [CacheModule, AuthModule, TenantModule, BranchModule, MenuModule],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer
+      .apply(TenantContextMiddleware)
+      .forRoutes('*'); // Apply tenant scoping globally across all API paths
+  }
+}
