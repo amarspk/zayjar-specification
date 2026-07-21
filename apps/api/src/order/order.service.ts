@@ -13,6 +13,7 @@ import {
   prisma,
 } from '@zayjar/db';
 import { KdsGateway } from '../kds/kds.gateway';
+import { WebhookService } from '../webhook/webhook.service';
 
 @Injectable()
 export class OrderService {
@@ -28,6 +29,7 @@ export class OrderService {
 
   constructor(
     @Optional() @Inject(KdsGateway) private readonly kdsGateway?: KdsGateway,
+    @Optional() @Inject(WebhookService) private readonly webhookService?: WebhookService,
   ) {}
 
   /**
@@ -54,13 +56,21 @@ export class OrderService {
     try {
       if (!this.kdsGateway) {
         this.logger.debug(`KdsGateway not injected, skipping broadcast for ${eventName}`);
-        return;
+      } else {
+        if (!tenantId || !branchId) {
+          this.logger.warn(`Cannot broadcast ${eventName}: missing tenantId/branchId`);
+        } else {
+          this.kdsGateway.broadcastOrderEvent(tenantId, branchId, eventName, order);
+        }
       }
-      if (!tenantId || !branchId) {
-        this.logger.warn(`Cannot broadcast ${eventName}: missing tenantId/branchId`);
-        return;
+
+      // Also dispatch outbound webhook per DOC-008 7.5 (fire-and-forget)
+      if (this.webhookService) {
+        // Don't await to avoid blocking order transaction
+        this.webhookService.dispatchEvent(tenantId, eventName, order).catch((err: Error) => {
+          this.logger.warn(`Webhook dispatch failed for ${eventName}: ${err.message}`);
+        });
       }
-      this.kdsGateway.broadcastOrderEvent(tenantId, branchId, eventName, order);
     } catch (err) {
       this.logger.error(`Failed to broadcast KDS event ${eventName}: ${(err as Error).message}`);
       // Do not fail order operation if broadcast fails
