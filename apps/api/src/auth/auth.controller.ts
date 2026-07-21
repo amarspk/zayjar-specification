@@ -19,19 +19,28 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   async login(
     @Body() dto: LoginDto,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
-    // NOTE: Direct DB login check is scheduled for TSK-1.6.
-    // Here we initialize the baseline token generation using Mock payload structures.
-    const mockUserPayload = {
-      sub: 'u410c-9a1b-42b8-bf83-097a18fcd34c',
-      email: dto.email || 'guest@zayjar.com',
-      tenantId: '7a18f-39b0-4050-bf83-097a18fcd34b',
-      roles: ['RESTAURANT_OWNER'],
-      permissions: ['menu:create', 'menu:update', 'orders:read'],
+    // Resolve tenantId from middleware (subdomain, custom domain, x-tenant-id header) for tenant isolation
+    const tenantId = (req as any).tenantId || null;
+
+    if (!dto.email || !dto.password) {
+      throw new Error('Email and password are required');
+    }
+
+    // Real DB login with tenant isolation, password verification, and MFA check
+    const userProfile = await this.authService.validateLogin(dto.email, dto.password!, (dto as any).mfaToken, tenantId);
+
+    const payload = {
+      sub: userProfile.id,
+      email: userProfile.email,
+      tenantId: userProfile.tenantId,
+      roles: userProfile.roles,
+      permissions: userProfile.permissions,
     };
 
-    const { accessToken, refreshToken } = await this.authService.generateTokens(mockUserPayload);
+    const { accessToken, refreshToken } = await this.authService.generateTokens(payload);
 
     // Set secure HTTP-Only sliding cookie
     res.cookie('__Host-Refresh-Token', refreshToken, JWT_CONFIG.cookieOptions);
@@ -40,11 +49,15 @@ export class AuthController {
       accessToken,
       expiresIn: 900,
       user: {
-        id: mockUserPayload.sub,
-        tenantId: mockUserPayload.tenantId,
-        email: mockUserPayload.email,
-        roles: mockUserPayload.roles,
-      }
+        id: payload.sub,
+        tenantId: payload.tenantId,
+        email: payload.email,
+        roles: payload.roles,
+        firstName: userProfile.firstName,
+        lastName: userProfile.lastName,
+        mfaRequired: false,
+        mfaEnabled: userProfile.mfaEnabled,
+      },
     };
   }
 
