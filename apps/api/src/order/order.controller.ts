@@ -11,7 +11,7 @@ import { RequirePermission } from '../auth/decorators/require-permission.decorat
 export class OrderController {
   constructor(private readonly orderService: OrderService) {}
 
-  @Post()
+  @Post('checkout')
   @HttpCode(HttpStatus.CREATED)
   @RequirePermission('create', 'Order')
   async createOrder(@Body() dto: CreateOrderRequestDto, @Req() req: any) {
