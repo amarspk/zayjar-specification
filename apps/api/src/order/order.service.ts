@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, BadRequestException, ConflictException, Inject, Optional } from '@nestjs/common';
 import { CreateOrderRequestDto } from './dto/create-order-request.dto';
 import { UpdateOrderStatusRequestDto } from './dto/update-order-status-request.dto';
 import { OrderStatus } from '@zayjar/types';
@@ -12,6 +12,7 @@ import {
   TenantRestaurantRepository,
   prisma,
 } from '@zayjar/db';
+import { KdsGateway } from '../kds/kds.gateway';
 
 @Injectable()
 export class OrderService {
@@ -24,6 +25,47 @@ export class OrderService {
   private readonly addonItemRepository = new TenantAddonItemRepository();
   private readonly invoiceRepository = new TenantInvoiceRepository();
   private readonly restaurantRepository = new TenantRestaurantRepository();
+
+  constructor(
+    @Optional() @Inject(KdsGateway) private readonly kdsGateway?: KdsGateway,
+  ) {}
+
+  /**
+   * Resolves canonical event name from OrderStatus
+   */
+  private mapStatusToEvent(status: OrderStatus): string | null {
+    const mapping: Record<OrderStatus, string> = {
+      [OrderStatus.DRAFT]: 'order.created',
+      [OrderStatus.PENDING]: 'order.created',
+      [OrderStatus.ACCEPTED]: 'order.accepted',
+      [OrderStatus.PREPARING]: 'order.preparing',
+      [OrderStatus.READY]: 'order.ready',
+      [OrderStatus.COMPLETED]: 'order.completed',
+      [OrderStatus.CANCELLED]: 'order.cancelled',
+    };
+    return mapping[status] || null;
+  }
+
+  /**
+   * Centralized broadcast helper - preserves tenant isolation
+   * Uses tenantId and branchId from database order record (server-resolved), never from client
+   */
+  private emitKdsEvent(tenantId: string, branchId: string, eventName: string, order: any) {
+    try {
+      if (!this.kdsGateway) {
+        this.logger.debug(`KdsGateway not injected, skipping broadcast for ${eventName}`);
+        return;
+      }
+      if (!tenantId || !branchId) {
+        this.logger.warn(`Cannot broadcast ${eventName}: missing tenantId/branchId`);
+        return;
+      }
+      this.kdsGateway.broadcastOrderEvent(tenantId, branchId, eventName, order);
+    } catch (err) {
+      this.logger.error(`Failed to broadcast KDS event ${eventName}: ${(err as Error).message}`);
+      // Do not fail order operation if broadcast fails
+    }
+  }
 
   /**
    * Orchestrates a secure checkout transaction.
@@ -111,8 +153,8 @@ export class OrderService {
     const orderNumber = `ORD-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}`;
 
     // 4. Execute atomic database transaction
-    return prisma.$transaction(async (tx: any) => {
-      const order = await tx.order.create({
+    const order = await prisma.$transaction(async (tx: any) => {
+      const createdOrder = await tx.order.create({
         data: {
           tenantId: userTenantId,
           branchId: dto.branchId,
@@ -139,8 +181,16 @@ export class OrderService {
       });
 
       this.logger.log(`Order checkout created atomically inside database. Reference: [${orderNumber}]`);
-      return order;
+      return createdOrder;
     });
+
+    // ==========================================
+    // REAL-TIME KDS BROADCAST: order.created
+    // ==========================================
+    // Use tenantId and branchId from server-resolved context and DB record
+    this.emitKdsEvent(userTenantId, dto.branchId, 'order.created', order);
+
+    return order;
   }
 
   /**
@@ -168,6 +218,7 @@ export class OrderService {
   /**
    * Enforces State-Machine validations during order status mutations.
    * Automatically generates billing invoices upon successful completion.
+   * Broadcasts KDS events automatically whenever status changes.
    */
   async updateOrderStatus(id: string, dto: UpdateOrderStatusRequestDto) {
     const order = await this.orderRepository.findById(id);
@@ -189,6 +240,14 @@ export class OrderService {
       await this.generateInvoice(updatedOrder);
     }
 
+    // ==========================================
+    // REAL-TIME KDS BROADCAST for status change
+    // ==========================================
+    const eventName = this.mapStatusToEvent(dto.status);
+    if (eventName) {
+      this.emitKdsEvent(updatedOrder.tenantId, updatedOrder.branchId, eventName, updatedOrder);
+    }
+
     return updatedOrder;
   }
 
@@ -205,9 +264,14 @@ export class OrderService {
       throw new ConflictException('Completed orders cannot be cancelled.');
     }
 
-    return this.orderRepository.update(id, {
+    const cancelledOrder = await this.orderRepository.update(id, {
       status: OrderStatus.CANCELLED,
     });
+
+    // Broadcast cancelled event
+    this.emitKdsEvent(cancelledOrder.tenantId, cancelledOrder.branchId, 'order.cancelled', cancelledOrder);
+
+    return cancelledOrder;
   }
 
   /**
