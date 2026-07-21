@@ -7,10 +7,11 @@ import { MenuModule } from './menu/menu.module';
 import { OrderModule } from './order/order.module';
 import { KdsModule } from './kds/kds.module';
 import { CustomerModule } from './customer/customer.module';
+import { BillingModule } from './billing/billing.module';
 import { TenantContextMiddleware } from './common/middleware/tenant-context.middleware';
 
 @Module({
-  imports: [CacheModule, AuthModule, TenantModule, BranchModule, MenuModule, OrderModule, KdsModule, CustomerModule],
+  imports: [CacheModule, AuthModule, TenantModule, BranchModule, MenuModule, OrderModule, KdsModule, CustomerModule, BillingModule],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
