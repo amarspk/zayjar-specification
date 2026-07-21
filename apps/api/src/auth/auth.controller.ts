@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Req, Res, HttpStatus, HttpCode, UseGuards, Logger } from '@nestjs/common';
+import { Controller, Post, Get, Body, Req, Res, HttpStatus, HttpCode, UseGuards, Logger } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import { JWT_CONFIG } from './config/jwt.config';
@@ -94,6 +94,27 @@ export class AuthController {
     return {
       success: true,
       message: 'Active session successfully terminated.'
+    };
+  }
+
+  @Get('me')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  async getMe(@CurrentUser() user: any) {
+    // user contains id, tenantId, email, roles, permissions from JWT
+    const profile = await this.authService.getMe(user.id, user.tenantId);
+
+    return {
+      user: {
+        id: profile.id,
+        tenantId: profile.tenantId,
+        firstName: (profile as any).firstName,
+        lastName: (profile as any).lastName,
+        email: user.email || (profile as any).email,
+        roles: user.roles || [],
+        permissions: user.permissions || [],
+        mfaEnabled: (profile as any).mfaEnabled || false,
+      },
     };
   }
 }
