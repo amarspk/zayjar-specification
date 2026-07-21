@@ -20,6 +20,7 @@ describe('BillingService Unit Tests - TSK-2.4', () => {
     service = module.get<BillingService>(BillingService);
     jest.clearAllMocks();
     delete process.env.STRIPE_SECRET_KEY;
+    delete process.env.STRIPE_WEBHOOK_SECRET;
   });
 
   it('should create mock checkout session when STRIPE_SECRET_KEY not configured', async () => {
@@ -105,5 +106,127 @@ describe('BillingService Unit Tests - TSK-2.4', () => {
     expect(planSpy).toHaveBeenCalledWith({ where: { id: dto.planId } });
     expect(tenantSpy).toHaveBeenCalledWith({ where: { id: tenantId } });
     expect(result.checkoutSessionId).toBeDefined();
+  });
+
+  // ==========================================
+  // TSK-3.3 - Stripe Webhook Handling Tests
+  // ==========================================
+  describe('Stripe Webhook Handling - TSK-3.3', () => {
+    it('should handle invoice.payment_succeeded and set ACTIVE', async () => {
+      const tenantId = 'tenant-123';
+      const event = {
+        type: 'invoice.payment_succeeded',
+        data: {
+          object: {
+            object: 'invoice',
+            id: 'in_123',
+            customer: 'cus_123',
+            subscription: 'sub_123',
+            metadata: { tenantId },
+          },
+        },
+      };
+
+      jest.spyOn(prisma.tenant, 'findFirst').mockResolvedValue({ id: tenantId } as any);
+      jest.spyOn(prisma.subscription, 'findFirst').mockResolvedValue(null as any);
+      jest.spyOn(prisma, '$transaction').mockImplementation(async (cb: any) =>
+        cb({
+          subscription: { updateMany: jest.fn().mockResolvedValue({}) },
+          tenant: { update: jest.fn().mockResolvedValue({}) },
+        }),
+      );
+
+      const result = await service.handleStripeWebhook(event);
+
+      expect(result.received).toBe(true);
+      expect(result.eventType).toBe('invoice.payment_succeeded');
+      expect(result.newSubscriptionStatus).toBe('ACTIVE');
+      expect(result.newTenantStatus).toBe('ACTIVE');
+    });
+
+    it('should handle invoice.payment_failed and set PAST_DUE', async () => {
+      const tenantId = 'tenant-123';
+      const event = {
+        type: 'invoice.payment_failed',
+        data: {
+          object: {
+            object: 'invoice',
+            id: 'in_123',
+            customer: 'cus_123',
+            subscription: 'sub_123',
+            metadata: { tenantId },
+          },
+        },
+      };
+
+      jest.spyOn(prisma.tenant, 'findFirst').mockResolvedValue({ id: tenantId } as any);
+      jest.spyOn(prisma, '$transaction').mockImplementation(async (cb: any) =>
+        cb({
+          subscription: { updateMany: jest.fn().mockResolvedValue({}) },
+          tenant: { update: jest.fn().mockResolvedValue({}) },
+        }),
+      );
+
+      const result = await service.handleStripeWebhook(event);
+
+      expect(result.newSubscriptionStatus).toBe('PAST_DUE');
+      expect(result.newTenantStatus).toBe('PAST_DUE');
+    });
+
+    it('should handle customer.subscription.deleted and set CANCELED', async () => {
+      const tenantId = 'tenant-123';
+      const event = {
+        type: 'customer.subscription.deleted',
+        data: {
+          object: {
+            object: 'subscription',
+            id: 'sub_123',
+            customer: 'cus_123',
+          },
+        },
+      };
+
+      jest.spyOn(prisma.tenant, 'findFirst').mockResolvedValue({ id: tenantId } as any);
+      jest.spyOn(prisma, '$transaction').mockImplementation(async (cb: any) =>
+        cb({
+          subscription: { updateMany: jest.fn().mockResolvedValue({}) },
+          tenant: { update: jest.fn().mockResolvedValue({}) },
+        }),
+      );
+
+      const result = await service.handleStripeWebhook(event);
+
+      expect(result.newSubscriptionStatus).toBe('CANCELED');
+      expect(result.newTenantStatus).toBe('CANCELED');
+    });
+
+    it('should return no_tenant_resolved when tenant cannot be resolved', async () => {
+      const event = {
+        type: 'invoice.payment_succeeded',
+        data: {
+          object: {
+            object: 'invoice',
+            id: 'in_123',
+            customer: 'cus_unknown',
+            subscription: 'sub_unknown',
+          },
+        },
+      };
+
+      jest.spyOn(prisma.tenant, 'findFirst').mockResolvedValue(null);
+      jest.spyOn(prisma.subscription, 'findFirst').mockResolvedValue(null);
+
+      const result = await service.handleStripeWebhook(event);
+
+      expect(result.received).toBe(true);
+      expect(result.action).toBe('no_tenant_resolved');
+    });
+
+    it('should verify webhook signature or fallback to JSON parsing in dev mode', () => {
+      delete process.env.STRIPE_WEBHOOK_SECRET;
+      const rawBody = JSON.stringify({ type: 'invoice.payment_succeeded', data: { object: {} } });
+      const result = service.verifyWebhookSignature(rawBody, undefined);
+      expect(result.type).toBe('invoice.payment_succeeded');
+    });
   });
 });
