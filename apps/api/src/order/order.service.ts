@@ -14,6 +14,7 @@ import {
 } from '@zayjar/db';
 import { KdsGateway } from '../kds/kds.gateway';
 import { WebhookService } from '../webhook/webhook.service';
+import { EmailService } from '../notification/email/email.service';
 
 @Injectable()
 export class OrderService {
@@ -30,6 +31,7 @@ export class OrderService {
   constructor(
     @Optional() @Inject(KdsGateway) private readonly kdsGateway?: KdsGateway,
     @Optional() @Inject(WebhookService) private readonly webhookService?: WebhookService,
+    @Optional() @Inject(EmailService) private readonly emailService?: EmailService,
   ) {}
 
   /**
@@ -305,7 +307,7 @@ export class OrderService {
   }
 
   /**
-   * Safely generates an accounting invoice.
+   * Safely generates an accounting invoice and dispatches email receipt per DOC-008 7.2
    */
   private async generateInvoice(order: any) {
     this.logger.log(`Order status marked as completed. Generating billing invoice record...`);
@@ -313,11 +315,32 @@ export class OrderService {
     const invoiceNumber = `INV-${new Date().getFullYear()}-${Math.floor(100000 + Math.random() * 900000)}`;
     const pdfUrl = `https://cdn.zayjar.com/invoices/${invoiceNumber}.pdf`;
 
-    return this.invoiceRepository.create({
+    const invoice = await this.invoiceRepository.create({
       tenantId: order.tenantId,
       orderId: order.id,
       invoiceNumber,
       pdfUrl,
     });
+
+    // Dispatch invoice email receipt (fire-and-forget)
+    if (this.emailService) {
+      this.emailService
+        .sendInvoiceEmail('customer@example.com', {
+          invoiceNumber,
+          orderNumber: order.orderNumber,
+          customerName: 'Valued Customer',
+          branchName: order.branchId,
+          subtotal: order.subtotal,
+          taxAmount: order.taxAmount,
+          total: order.total,
+          pdfUrl,
+          companyName: 'Zayjar Restaurant',
+        })
+        .catch((err) => {
+          this.logger.warn(`Failed to send invoice email for [${invoiceNumber}]: ${(err as Error).message}`);
+        });
+    }
+
+    return invoice;
   }
 }

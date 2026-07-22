@@ -1,14 +1,18 @@
-import { Injectable, ConflictException, Logger, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Injectable, ConflictException, Logger, NotFoundException, ForbiddenException, Inject, Optional } from '@nestjs/common';
 import { CreateTenantRequestDto } from './dto/create-tenant-request.dto';
 import { UpdateTenantRequestDto } from './dto/update-tenant-request.dto';
 import { AuthService } from '../auth/auth.service';
 import { prisma } from '@zayjar/db';
+import { EmailService } from '../notification/email/email.service';
 
 @Injectable()
 export class TenantService {
   private readonly logger = new Logger('TenantService');
 
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    @Optional() @Inject(EmailService) private readonly emailService?: EmailService,
+  ) {}
 
   /**
    * Orchestrates the complete onboarding transaction for a new restaurant merchant.
@@ -107,7 +111,7 @@ export class TenantService {
 
       this.logger.log(`Onboarding transaction completed successfully. Tenant UUID: [${tenant.id}]`);
 
-      return {
+      const result = {
         tenant: {
           id: tenant.id,
           name: tenant.name,
@@ -123,6 +127,23 @@ export class TenantService {
           name: branch.name,
         }
       };
+
+      // Async welcome email dispatch per DOC-008 7.2 (fire-and-forget to not block onboarding)
+      if (this.emailService) {
+        this.emailService
+          .sendWelcomeEmail(dto.ownerEmail, {
+            companyName: dto.companyName,
+            ownerFirstName: dto.ownerFirstName,
+            ownerLastName: dto.ownerLastName,
+            subdomain: dto.subdomain,
+            status: 'TRIALING',
+          })
+          .catch((err) => {
+            this.logger.warn(`Failed to send welcome email to [${dto.ownerEmail}]: ${(err as Error).message}`);
+          });
+      }
+
+      return result;
     });
   }
 

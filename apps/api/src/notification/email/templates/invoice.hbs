@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Invoice {{invoiceNumber}}</title></head>
+<body style="font-family: Arial, sans-serif;">
+  <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+    <h2 style="color: #333;">Invoice Receipt - {{invoiceNumber}}</h2>
+    <p>Hello {{customerName}},</p>
+    <p>Thank you for your order <strong>{{orderNumber}}</strong> at {{branchName}}.</p>
+    <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+      <tr><td>Subtotal:</td><td style="text-align: right;">${{subtotal}}</td></tr>
+      <tr><td>Tax:</td><td style="text-align: right;">${{taxAmount}}</td></tr>
+      <tr><td><strong>Total:</strong></td><td style="text-align: right;"><strong>${{total}}</strong></td></tr>
+    </table>
+    <p>Download PDF: <a href="{{pdfUrl}}">{{pdfUrl}}</a></p>
+    <p>We appreciate your business!</p>
+    <p>Best,<br>{{companyName}}</p>
+  </div>
+</body>
+</html>

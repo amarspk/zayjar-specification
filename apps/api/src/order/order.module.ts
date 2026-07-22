@@ -4,9 +4,10 @@ import { OrderController } from './order.controller';
 import { AuthModule } from '../auth/auth.module';
 import { KdsModule } from '../kds/kds.module';
 import { WebhookModule } from '../webhook/webhook.module';
+import { NotificationModule } from '../notification/notification.module';
 
 @Module({
-  imports: [AuthModule, forwardRef(() => KdsModule), forwardRef(() => WebhookModule)],
+  imports: [AuthModule, forwardRef(() => KdsModule), forwardRef(() => WebhookModule), NotificationModule],
   controllers: [OrderController],
   providers: [OrderService],
   exports: [OrderService],
