@@ -6,6 +6,7 @@ import { Public } from '../auth/decorators/public.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RbacPermissionGuard } from '../auth/guards/rbac-permission.guard';
 import { RequirePermission } from '../auth/decorators/require-permission.decorator';
+import { SubscriptionGuard, RequireSubscriptionCheck } from '../subscription/guards/subscription.guard';
 
 @Controller('api/v1/tenants')
 export class TenantController {
@@ -28,8 +29,9 @@ export class TenantController {
 
   @Put(':id')
   @HttpCode(HttpStatus.OK)
-  @UseGuards(JwtAuthGuard, RbacPermissionGuard)
+  @UseGuards(JwtAuthGuard, RbacPermissionGuard, SubscriptionGuard)
   @RequirePermission('update', 'Tenant')
+  @RequireSubscriptionCheck('customDomain')
   async updateTenant(@Param('id') id: string, @Body() dto: UpdateTenantRequestDto, @Req() req: any) {
     const requester = req.user ? { tenantId: req.user.tenantId, roles: req.user.roles } : undefined;
     return this.tenantService.updateTenant(id, dto, requester);

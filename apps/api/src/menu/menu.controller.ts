@@ -5,9 +5,10 @@ import { CreateProductRequestDto } from './dto/create-product-request.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RbacPermissionGuard } from '../auth/guards/rbac-permission.guard';
 import { RequirePermission } from '../auth/decorators/require-permission.decorator';
+import { SubscriptionGuard, RequireSubscriptionCheck } from '../subscription/guards/subscription.guard';
 
 @Controller('api/v1/menu')
-@UseGuards(JwtAuthGuard, RbacPermissionGuard)
+@UseGuards(JwtAuthGuard, RbacPermissionGuard, SubscriptionGuard)
 export class MenuController {
   constructor(private readonly menuService: MenuService) {}
 
@@ -25,6 +26,7 @@ export class MenuController {
 
   @Post('products')
   @RequirePermission('create', 'Product')
+  @RequireSubscriptionCheck('product')
   async createProduct(@Body() dto: CreateProductRequestDto) {
     return this.menuService.createProduct(dto);
   }

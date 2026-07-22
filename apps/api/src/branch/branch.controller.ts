@@ -5,14 +5,16 @@ import { CreateTableRequestDto } from './dto/create-table-request.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RbacPermissionGuard } from '../auth/guards/rbac-permission.guard';
 import { RequirePermission } from '../auth/decorators/require-permission.decorator';
+import { SubscriptionGuard, RequireSubscriptionCheck } from '../subscription/guards/subscription.guard';
 
 @Controller('api/v1')
-@UseGuards(JwtAuthGuard, RbacPermissionGuard)
+@UseGuards(JwtAuthGuard, RbacPermissionGuard, SubscriptionGuard)
 export class BranchController {
   constructor(private readonly branchService: BranchService) {}
 
   @Post('branches')
   @RequirePermission('create', 'Branch')
+  @RequireSubscriptionCheck('branch')
   async createBranch(@Body() dto: CreateBranchRequestDto) {
     return this.branchService.createBranch(dto);
   }
