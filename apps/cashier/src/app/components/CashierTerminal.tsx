@@ -24,6 +24,8 @@ interface OfflineOrder {
   status: 'PENDING_SYNC' | 'SYNCED' | 'FAILED';
   createdAt: string;
   syncedAt?: string;
+  apiUrl?: string;
+  authToken?: string;
 }
 
 const DB_NAME = 'zayjar-cashier-db';
@@ -56,6 +58,15 @@ export const CashierTerminal: React.FC<{ tenantId: string; branchId: string; api
           setServiceWorkerReady(true);
         })
         .catch((err) => console.warn('SW registration failed', err));
+
+      // Listen for messages from Service Worker about sync progress
+      navigator.serviceWorker.addEventListener('message', (event) => {
+        const data = event.data || {};
+        if (data.type === 'ORDER_SYNCED') {
+          console.log(`SW synced order ${data.orderNumber} for tenant ${data.tenantId}`);
+          loadOfflineOrders();
+        }
+      });
     }
 
     const handleOnline = () => setIsOnline(true);
@@ -83,66 +94,71 @@ export const CashierTerminal: React.FC<{ tenantId: string; branchId: string; api
     }
   };
 
-  // Save order to IndexedDB for offline support
+  // Save order to IndexedDB for offline support - preserves tenant isolation and auth for SW sync
   const saveOfflineOrder = async (order: OfflineOrder) => {
     const db = await getDb();
-    await db.put(STORE_NAME, order);
+    // Preserve Authorization, X-Tenant-ID, X-Branch-ID for SW to use during sync per requirements
+    const token = typeof window !== 'undefined' ? localStorage.getItem('accessToken') || '' : '';
+    const orderWithAuth: OfflineOrder = {
+      ...order,
+      apiUrl: order.apiUrl || apiUrl,
+      authToken: order.authToken || token,
+    };
+    await db.put(STORE_NAME, orderWithAuth);
     await loadOfflineOrders();
   };
 
-  // Sync offline orders when connection restored per DOC-001 1.3
-  useEffect(() => {
-    if (isOnline && offlineOrders.some((o) => o.status === 'PENDING_SYNC')) {
-      syncOfflineOrders();
-    }
-  }, [isOnline, offlineOrders]);
-
-  const syncOfflineOrders = async () => {
+  // Trigger Service Worker to sync per DOC-001 1.3: SW synchronizes when connectivity restored
+  // React app may trigger sync, but must not perform sync logic itself per requirements
+  const triggerServiceWorkerSync = async () => {
     if (isSyncing) return;
     setIsSyncing(true);
 
     try {
-      const db = await getDb();
-      const pendingOrders = offlineOrders.filter((o) => o.status === 'PENDING_SYNC');
-
-      for (const order of pendingOrders) {
-        try {
-          // Attempt to sync with cloud database per DOC-001 1.3
-          const token = localStorage.getItem('accessToken') || '';
-          const response = await fetch(`${apiUrl}/api/v1/orders/checkout`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${token}`,
-              'X-Tenant-ID': tenantId,
-              'X-Branch-ID': branchId,
-            },
-            body: JSON.stringify({
-              branchId: order.branchId,
-              type: 'DINE_IN',
-              items: order.items.map((i) => ({ productId: i.productId, quantity: i.quantity })),
-              paymentMethod: 'CASH',
-            }),
-          });
-
-          if (response.ok) {
-            const updated: OfflineOrder = { ...order, status: 'SYNCED', syncedAt: new Date().toISOString() };
-            await db.put(STORE_NAME, updated);
-            console.log(`Offline order ${order.orderNumber} synced successfully for tenant ${tenantId}`);
+      if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+        if ('SyncManager' in window) {
+          const reg = await navigator.serviceWorker.ready;
+          // @ts-ignore - SyncManager may not be in TS types
+          if (reg.sync) {
+            // @ts-ignore
+            await reg.sync.register('sync-offline-orders');
+            console.log('Background Sync API: sync.register(sync-offline-orders) called for tenant', tenantId);
           } else {
-            throw new Error(`Sync failed with status ${response.status}`);
+            // Fallback to postMessage
+            const activeReg = await navigator.serviceWorker.ready;
+            activeReg.active?.postMessage({ type: 'SYNC_OFFLINE_ORDERS', tenantId, branchId });
+            console.log('Fallback: postMessage SYNC_OFFLINE_ORDERS to SW for tenant', tenantId);
           }
-        } catch (err) {
-          console.warn(`Failed to sync order ${order.orderNumber}:`, err);
-          const failed: OfflineOrder = { ...order, status: 'FAILED' };
-          await db.put(STORE_NAME, failed);
+        } else {
+          // Fallback for browsers without Background Sync API
+          const reg = await navigator.serviceWorker.ready;
+          reg.active?.postMessage({ type: 'SYNC_OFFLINE_ORDERS', tenantId, branchId });
+          console.log('Fallback: postMessage SYNC_OFFLINE_ORDERS to SW (no SyncManager) for tenant', tenantId);
         }
       }
 
-      await loadOfflineOrders();
-    } finally {
+      // Give SW time to process and then reload orders to show updated statuses
+      setTimeout(() => {
+        loadOfflineOrders();
+        setIsSyncing(false);
+      }, 2000);
+    } catch (err) {
+      console.warn('Failed to trigger SW sync', err);
       setIsSyncing(false);
     }
+  };
+
+  // Sync offline orders when connection restored - triggers SW, does not perform sync itself per requirements
+  useEffect(() => {
+    if (isOnline && offlineOrders.some((o) => o.status === 'PENDING_SYNC')) {
+      console.log(`Connection restored, triggering SW sync for tenant ${tenantId} branch ${branchId} per DOC-001 1.3`);
+      triggerServiceWorkerSync();
+    }
+  }, [isOnline, offlineOrders]);
+
+  // For manual sync button, trigger SW only
+  const syncOfflineOrders = async () => {
+    await triggerServiceWorkerSync();
   };
 
   const addToCart = (productId: string, name: string, price: number) => {
@@ -160,6 +176,7 @@ export const CashierTerminal: React.FC<{ tenantId: string; branchId: string; api
 
   const handleCheckout = async () => {
     const orderNumber = `ORD-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}`;
+    const token = typeof window !== 'undefined' ? localStorage.getItem('accessToken') || '' : '';
     const offlineOrder: OfflineOrder = {
       id: `offline-${Date.now()}`,
       tenantId,
@@ -170,19 +187,31 @@ export const CashierTerminal: React.FC<{ tenantId: string; branchId: string; api
       total,
       status: isOnline ? 'SYNCED' : 'PENDING_SYNC',
       createdAt: new Date().toISOString(),
+      apiUrl,
+      authToken: token,
     };
 
     if (!isOnline) {
-      // Store in IndexedDB for offline support per DOC-001 1.3
+      // Store in IndexedDB for offline support per DOC-001 1.3, SW will sync when online
       await saveOfflineOrder(offlineOrder);
       setCart([]);
-      alert(`Offline: Order ${orderNumber} saved locally. Will sync when online. Tenant isolated: ${tenantId}`);
+      alert(`Offline: Order ${orderNumber} saved locally. Will sync when online via Service Worker. Tenant isolated: ${tenantId}`);
+      // Trigger SW sync registration for background sync when online
+      try {
+        if ('serviceWorker' in navigator && 'SyncManager' in window) {
+          const reg = await navigator.serviceWorker.ready;
+          // @ts-ignore
+          if (reg.sync) {
+            // @ts-ignore
+            await reg.sync.register('sync-offline-orders');
+          }
+        }
+      } catch {}
       return;
     }
 
-    // Online: try to checkout via API with tenant isolation
+    // Online: try to checkout via API with tenant isolation (immediate path), but also save to IndexedDB for history
     try {
-      const token = localStorage.getItem('accessToken') || '';
       const response = await fetch(`${apiUrl}/api/v1/orders/checkout`, {
         method: 'POST',
         headers: {
@@ -201,18 +230,18 @@ export const CashierTerminal: React.FC<{ tenantId: string; branchId: string; api
 
       if (response.ok) {
         const result = await response.json();
-        // Also save to IndexedDB as synced for history
-        await saveOfflineOrder({ ...offlineOrder, id: result.id || offlineOrder.id, status: 'SYNCED', syncedAt: new Date().toISOString() });
+        await saveOfflineOrder({ ...offlineOrder, id: result.id || offlineOrder.id, status: 'SYNCED', syncedAt: new Date().toISOString(), apiUrl, authToken: token });
         setCart([]);
         alert(`Order ${result.orderNumber || orderNumber} placed successfully. Tenant: ${tenantId}`);
       } else {
         throw new Error(`Checkout failed ${response.status}`);
       }
     } catch (err) {
-      // On failure, save offline
-      await saveOfflineOrder({ ...offlineOrder, status: 'PENDING_SYNC' });
+      await saveOfflineOrder({ ...offlineOrder, status: 'PENDING_SYNC', apiUrl, authToken: token });
       setCart([]);
-      alert(`Network error, order ${orderNumber} saved offline for tenant ${tenantId}. Will sync when online.`);
+      alert(`Network error, order ${orderNumber} saved offline for tenant ${tenantId}. Service Worker will sync when online.`);
+      // Trigger SW background sync for retry
+      triggerServiceWorkerSync();
     }
   };
 
@@ -228,7 +257,6 @@ export const CashierTerminal: React.FC<{ tenantId: string; branchId: string; api
       </header>
 
       <div className="flex flex-1">
-        {/* Product grid */}
         <main className="flex-1 p-4 grid grid-cols-2 md:grid-cols-3 gap-4">
           {[
             { id: 'prod_1', name: 'Truffle Burger', price: 14.5 },
@@ -242,7 +270,6 @@ export const CashierTerminal: React.FC<{ tenantId: string; branchId: string; api
           ))}
         </main>
 
-        {/* Cart and offline orders */}
         <aside className="w-80 bg-white shadow-lg p-4 flex flex-col">
           <h2 className="font-bold mb-2">Cart - Tenant {tenantId.slice(-4)}</h2>
           <div className="flex-1 space-y-2 overflow-y-auto">
@@ -260,7 +287,7 @@ export const CashierTerminal: React.FC<{ tenantId: string; branchId: string; api
           </div>
 
           <div className="mt-6">
-            <h3 className="text-xs font-bold uppercase text-gray-500 mb-2">Offline Queue (IndexedDB)</h3>
+            <h3 className="text-xs font-bold uppercase text-gray-500 mb-2">Offline Queue (IndexedDB) - SW Sync per DOC-001 1.3</h3>
             <div className="space-y-1 max-h-40 overflow-y-auto">
               {offlineOrders.length === 0 ? <p className="text-[10px] text-gray-400">No offline orders</p> : offlineOrders.map((o) => (
                 <div key={o.id} className="text-[10px] p-2 bg-gray-50 rounded flex justify-between">
@@ -271,7 +298,7 @@ export const CashierTerminal: React.FC<{ tenantId: string; branchId: string; api
             </div>
             {isOnline && offlineOrders.some((o) => o.status === 'PENDING_SYNC') && (
               <button onClick={syncOfflineOrders} disabled={isSyncing} className="w-full mt-2 text-xs bg-slate-800 text-white py-1 rounded">
-                {isSyncing ? 'Syncing...' : 'Sync Now'}
+                {isSyncing ? 'Syncing via SW...' : 'Sync Now (Triggers SW)'}
               </button>
             )}
           </div>
@@ -279,7 +306,7 @@ export const CashierTerminal: React.FC<{ tenantId: string; branchId: string; api
       </div>
 
       <footer className="p-2 text-center text-[10px] text-gray-400">
-        Cashier PWA Offline-First • Service Workers cached • IndexedDB • Tenant {tenantId} Branch {branchId} • Syncs when online • {new Date().getFullYear()}
+        Cashier PWA Offline-First • Service Workers cached • IndexedDB • Tenant {tenantId} Branch {branchId} • SW Syncs when online per DOC-001 1.3 • {new Date().getFullYear()}
       </footer>
     </div>
   );
