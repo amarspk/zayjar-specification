@@ -5,15 +5,17 @@ import { UpdateOrderStatusRequestDto } from './dto/update-order-status-request.d
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RbacPermissionGuard } from '../auth/guards/rbac-permission.guard';
 import { RequirePermission } from '../auth/decorators/require-permission.decorator';
+import { RateLimitGuard, RateLimit } from '../common/rate-limit/rate-limit.guard';
 
 @Controller('api/v1/orders')
-@UseGuards(JwtAuthGuard, RbacPermissionGuard)
+@UseGuards(JwtAuthGuard, RbacPermissionGuard, RateLimitGuard)
 export class OrderController {
   constructor(private readonly orderService: OrderService) {}
 
   @Post('checkout')
   @HttpCode(HttpStatus.CREATED)
   @RequirePermission('create', 'Order')
+  @RateLimit('checkout')
   async createOrder(@Body() dto: CreateOrderRequestDto, @Req() req: any) {
     const userTenantId = req.user.tenantId;
     return this.orderService.createOrder(dto, userTenantId);

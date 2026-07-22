@@ -6,9 +6,10 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RbacPermissionGuard } from '../auth/guards/rbac-permission.guard';
 import { RequirePermission } from '../auth/decorators/require-permission.decorator';
 import { SubscriptionGuard, RequireSubscriptionCheck } from '../subscription/guards/subscription.guard';
+import { RateLimitGuard, RateLimit } from '../common/rate-limit/rate-limit.guard';
 
 @Controller('api/v1/menu')
-@UseGuards(JwtAuthGuard, RbacPermissionGuard, SubscriptionGuard)
+@UseGuards(JwtAuthGuard, RbacPermissionGuard, SubscriptionGuard, RateLimitGuard)
 export class MenuController {
   constructor(private readonly menuService: MenuService) {}
 
@@ -20,6 +21,7 @@ export class MenuController {
 
   @Get('categories')
   @RequirePermission('read', 'Product')
+  @RateLimit('public')
   async getCategories() {
     return this.menuService.getCategories();
   }
@@ -33,6 +35,7 @@ export class MenuController {
 
   @Get('products')
   @RequirePermission('read', 'Product')
+  @RateLimit('public')
   async getProducts(@Query('categoryId') categoryId: string) {
     return this.menuService.getProducts(categoryId);
   }

@@ -7,6 +7,7 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { LoginDto } from '@zayjar/types';
 import { MfaVerifyRequestDto } from './dto/mfa-verify-request.dto';
+import { RateLimitGuard, RateLimit } from '../common/rate-limit/rate-limit.guard';
 
 @Controller('api/v1/auth')
 export class AuthController {
@@ -17,6 +18,8 @@ export class AuthController {
   @Public()
   @Post('login')
   @HttpCode(HttpStatus.OK)
+  @UseGuards(RateLimitGuard)
+  @RateLimit('auth')
   async login(
     @Body() dto: LoginDto,
     @Req() req: Request,
