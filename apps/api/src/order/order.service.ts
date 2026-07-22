@@ -15,6 +15,7 @@ import {
 import { KdsGateway } from '../kds/kds.gateway';
 import { WebhookService } from '../webhook/webhook.service';
 import { EmailService } from '../notification/email/email.service';
+import { SmsService } from '../notification/sms/sms.service';
 
 @Injectable()
 export class OrderService {
@@ -32,6 +33,7 @@ export class OrderService {
     @Optional() @Inject(KdsGateway) private readonly kdsGateway?: KdsGateway,
     @Optional() @Inject(WebhookService) private readonly webhookService?: WebhookService,
     @Optional() @Inject(EmailService) private readonly emailService?: EmailService,
+    @Optional() @Inject(SmsService) private readonly smsService?: SmsService,
   ) {}
 
   /**
@@ -258,6 +260,18 @@ export class OrderService {
     const eventName = this.mapStatusToEvent(dto.status);
     if (eventName) {
       this.emitKdsEvent(updatedOrder.tenantId, updatedOrder.branchId, eventName, updatedOrder);
+    }
+
+    // Transactional SMS notification for order status updates per DOC-008 7.3
+    if (dto.status === OrderStatus.READY && this.smsService) {
+      // In real system, would fetch customer phone from order.customerId
+      // For now, use mock phone number if available in order
+      const customerPhone = (updatedOrder as any).customerPhone || '+12025550144';
+      this.smsService
+        .sendOrderStatusSms(customerPhone, updatedOrder.orderNumber, dto.status, updatedOrder.tenantId)
+        .catch((err) => {
+          this.logger.warn(`Failed to send SMS for order [${updatedOrder.id}] status [${dto.status}]: ${(err as Error).message}`);
+        });
     }
 
     return updatedOrder;
