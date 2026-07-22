@@ -1,0 +1,127 @@
+version: '3.8'
+
+services:
+  # 1. Relational Database Engine
+  postgres-db:
+    image: postgres:15-alpine
+    container_name: zayjar-postgres
+    restart: always
+    environment:
+      POSTGRES_DB: zayjar_prod
+      POSTGRES_USER: postgres_admin
+      POSTGRES_PASSWORD: SecretPassword123!
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres_admin -d zayjar_prod"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 2. Connection Pooler Layer
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: zayjar-pgbouncer
+    restart: always
+    ports:
+      - "6432:6432"
+    environment:
+      - DB_HOST=postgres-db
+      - DB_USER=postgres_admin
+      - DB_PASSWORD=SecretPassword123!
+      - DB_NAME=zayjar_prod
+      - POOL_MODE=transaction
+      - MAX_CLIENT_CONN=10000
+      - DEFAULT_POOL_SIZE=50
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+
+  # 3. Volatile Cache & Queue Store
+  redis-cache:
+    image: redis:7.2-alpine
+    container_name: zayjar-redis
+    restart: always
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --requirepass SecretRedis123!
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "SecretRedis123!", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 4. Modular Monolith Core API
+  api-core:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: zayjar-api
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgresql://postgres_admin:SecretPassword123!@pgbouncer:6432/zayjar_prod?sslmode=disable
+      - REDIS_URL=redis://:SecretRedis123!@redis-cache:6379
+      - JWT_PRIVATE_KEY=/run/secrets/jwt_private_key
+      - JWT_PUBLIC_KEY=/run/secrets/jwt_public_key
+    depends_on:
+      pgbouncer:
+        condition: service_started
+      redis-cache:
+        condition: service_healthy
+
+  # 5. Background Asynchronous Worker Pool
+  queue-worker:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: zayjar-worker
+    restart: always
+    command: ["pnpm", "--filter", "@zayjar/api", "run", "start:worker"]
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgresql://postgres_admin:SecretPassword123!@pgbouncer:6432/zayjar_prod?sslmode=disable
+      - REDIS_URL=redis://:SecretRedis123!@redis-cache:6379
+    depends_on:
+      redis-cache:
+        condition: service_healthy
+
+  # 6. Customer QR Menu Frontend
+  qr-menu-app:
+    build:
+      context: .
+      dockerfile: apps/qr-menu/Dockerfile
+    container_name: zayjar-qr-menu
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://api-core:8000
+    depends_on:
+      - api-core
+
+  # 7. Tenant Backoffice Management Panel
+  backoffice-app:
+    build:
+      context: .
+      dockerfile: apps/backoffice/Dockerfile
+    container_name: zayjar-backoffice
+    restart: always
+    ports:
+      - "3001:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://api-core:8000
+    depends_on:
+      - api-core
+
+volumes:
+  pg-data:
+    driver: local
+  redis-data:
+    driver: local
