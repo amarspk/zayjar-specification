@@ -1,0 +1,23 @@
+{
+  "name": "@zayjar/cashier",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3002",
+    "build": "next build",
+    "start": "next start -p 3002",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@zayjar/types": "workspace:*",
+    "idb": "^8.0.0",
+    "next": "^14.2.3",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.17",
+    "eslint-config-next": "^14.2.3",
+    "typescript": "^5.4.5"
+  }
+}
