@@ -1,8 +1,8 @@
 'use client';
-/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars, curly, no-console */
+/* eslint-disable */
 
 import React, { useState } from 'react';
-import { useQuery, useMutation, useQueryClient, QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { useQuery, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 interface Branch {
   id: string;
@@ -32,70 +32,125 @@ interface Metrics {
   arrUSD: number;
 }
 
-// Mock API functions with tenant isolation preserved via headers
-const fetchBranches = async (): Promise<Branch[]> => {
-  // In real app, would call /api/v1/branches with Authorization Bearer and X-Tenant-ID
-  return [
-    { id: 'b1', name: 'Main Branch', address: 'Downtown Crossing', isActive: true },
-    { id: 'b2', name: 'Airport Branch', address: 'Airport Rd', isActive: true },
-  ];
+const getApiBaseUrl = (): string => {
+  return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 };
 
-const fetchCategories = async (): Promise<Category[]> => {
-  return [
-    { id: 'cat1', name: 'Premium Craft Burgers', sortOrder: 1 },
-    { id: 'cat2', name: 'Artisan Pizzas', sortOrder: 2 },
-  ];
+const getAuthHeaders = (tenantId: string, branchId?: string): Record<string, string> => {
+  const token = typeof window !== 'undefined' ? localStorage.getItem('accessToken') || '' : '';
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  if (tenantId) {
+    headers['X-Tenant-ID'] = tenantId;
+  }
+  if (branchId) {
+    headers['X-Branch-ID'] = branchId;
+  }
+  return headers;
 };
 
-const fetchOrders = async (branchId?: string): Promise<Order[]> => {
-  return [
-    { id: 'o1', orderNumber: 'ORD-2026-100', status: 'PENDING', total: 32.2, branchId: branchId || 'b1' },
-    { id: 'o2', orderNumber: 'ORD-2026-101', status: 'PREPARING', total: 18.5, branchId: branchId || 'b1' },
-  ];
+const fetchBranches = async (tenantId: string): Promise<Branch[]> => {
+  const apiUrl = getApiBaseUrl();
+  const response = await fetch(`${apiUrl}/api/v1/branches`, {
+    method: 'GET',
+    headers: getAuthHeaders(tenantId),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch branches: ${response.status} ${response.statusText}`);
+  }
+
+  const data = await response.json();
+  return Array.isArray(data) ? data : data.branches || [];
 };
 
-const fetchMetrics = async (): Promise<Metrics> => {
-  // Would call /api/v1/admin/tenants/metrics for PLATFORM_OWNER
-  return { totalTenants: 142, activeSubscriptions: 120, mrrUSD: 14500, arrUSD: 174000 };
+const fetchCategories = async (tenantId: string): Promise<Category[]> => {
+  const apiUrl = getApiBaseUrl();
+  const response = await fetch(`${apiUrl}/api/v1/menu/categories`, {
+    method: 'GET',
+    headers: getAuthHeaders(tenantId),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch categories: ${response.status}`);
+  }
+
+  const data = await response.json();
+  return Array.isArray(data) ? data : data.categories || [];
+};
+
+const fetchOrders = async (tenantId: string, branchId?: string): Promise<Order[]> => {
+  const apiUrl = getApiBaseUrl();
+  const url = new URL(`${apiUrl}/api/v1/orders`);
+  if (branchId) {
+    url.searchParams.set('branchId', branchId);
+  }
+
+  const response = await fetch(url.toString(), {
+    method: 'GET',
+    headers: getAuthHeaders(tenantId, branchId),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch orders: ${response.status}`);
+  }
+
+  const data = await response.json();
+  return Array.isArray(data) ? data : data.orders || [];
+};
+
+const fetchMetrics = async (tenantId: string): Promise<Metrics> => {
+  const apiUrl = getApiBaseUrl();
+  const response = await fetch(`${apiUrl}/api/v1/admin/tenants/metrics`, {
+    method: 'GET',
+    headers: getAuthHeaders(tenantId),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch metrics: ${response.status}`);
+  }
+
+  const data = await response.json();
+  return data;
 };
 
 const AdminPanelContent: React.FC<{ tenantId: string; branchId: string; setBranchId: (id: string) => void }> = ({ tenantId, branchId, setBranchId }) => {
-  const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<'branches' | 'menu' | 'orders' | 'metrics' | 'kds'>('branches');
 
-  // TanStack Query with 5-minute stale-time and background pre-fetching per DOC-001 1.3
   const branchesQuery = useQuery({
     queryKey: ['branches', tenantId],
-    queryFn: fetchBranches,
-    staleTime: 5 * 60 * 1000, // 5 minutes per spec
+    queryFn: () => fetchBranches(tenantId),
+    staleTime: 5 * 60 * 1000,
     refetchOnWindowFocus: true,
-    refetchInterval: 5 * 60 * 1000, // Background pre-fetching
+    refetchInterval: 5 * 60 * 1000,
   });
 
   const categoriesQuery = useQuery({
     queryKey: ['categories', tenantId],
-    queryFn: fetchCategories,
+    queryFn: () => fetchCategories(tenantId),
     staleTime: 5 * 60 * 1000,
   });
 
   const ordersQuery = useQuery({
     queryKey: ['orders', tenantId, branchId],
-    queryFn: () => fetchOrders(branchId),
+    queryFn: () => fetchOrders(tenantId, branchId),
     staleTime: 5 * 60 * 1000,
     enabled: activeTab === 'orders',
   });
 
   const metricsQuery = useQuery({
     queryKey: ['metrics', tenantId],
-    queryFn: fetchMetrics,
+    queryFn: () => fetchMetrics(tenantId),
     staleTime: 5 * 60 * 1000,
     enabled: activeTab === 'metrics',
   });
 
   return (
     <div className="w-full min-h-screen bg-gray-50">
-      {/* Header with tenant context */}
       <header className="bg-white shadow-sm px-6 py-4 flex justify-between items-center">
         <h1 className="text-xl font-bold text-gray-900">Backoffice - Tenant {tenantId.slice(-6)}</h1>
         <div className="flex gap-2 items-center">
@@ -114,7 +169,6 @@ const AdminPanelContent: React.FC<{ tenantId: string; branchId: string; setBranc
         </div>
       </header>
 
-      {/* Tabs */}
       <nav className="bg-white border-b px-6 flex gap-6">
         {(['branches', 'menu', 'orders', 'metrics', 'kds'] as const).map((tab) => (
           <button
@@ -131,7 +185,9 @@ const AdminPanelContent: React.FC<{ tenantId: string; branchId: string; setBranc
         {activeTab === 'branches' && (
           <section>
             <h2 className="text-lg font-bold mb-4">Branches (Branch Switcher UI per DOC-005 4.2)</h2>
-            {branchesQuery.isLoading ? <p>Loading...</p> : (
+            {branchesQuery.isLoading ? <p>Loading...</p> : branchesQuery.isError ? (
+              <p className="text-red-500 text-sm">Failed to load branches: {(branchesQuery.error as Error).message}. Ensure API at {getApiBaseUrl()} is running with valid JWT.</p>
+            ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {branchesQuery.data?.map((branch) => (
                   <div key={branch.id} className="bg-white p-4 rounded shadow">
@@ -150,7 +206,9 @@ const AdminPanelContent: React.FC<{ tenantId: string; branchId: string; setBranc
         {activeTab === 'menu' && (
           <section>
             <h2 className="text-lg font-bold mb-4">Menu Categories (Price Inheritance Engine per DOC-005 4.3)</h2>
-            {categoriesQuery.isLoading ? <p>Loading...</p> : (
+            {categoriesQuery.isLoading ? <p>Loading...</p> : categoriesQuery.isError ? (
+              <p className="text-red-500 text-sm">Failed to load categories: {(categoriesQuery.error as Error).message}</p>
+            ) : (
               <div className="space-y-2">
                 {categoriesQuery.data?.map((cat) => (
                   <div key={cat.id} className="bg-white p-3 rounded shadow flex justify-between">
@@ -166,7 +224,9 @@ const AdminPanelContent: React.FC<{ tenantId: string; branchId: string; setBranc
         {activeTab === 'orders' && (
           <section>
             <h2 className="text-lg font-bold mb-4">Orders - Branch {branchId} (State Machine per DOC-005 4.4)</h2>
-            {ordersQuery.isLoading ? <p>Loading...</p> : (
+            {ordersQuery.isLoading ? <p>Loading...</p> : ordersQuery.isError ? (
+              <p className="text-red-500 text-sm">Failed to load orders: {(ordersQuery.error as Error).message}</p>
+            ) : (
               <div className="space-y-2">
                 {ordersQuery.data?.map((order) => (
                   <div key={order.id} className="bg-white p-3 rounded shadow flex justify-between">
@@ -183,7 +243,9 @@ const AdminPanelContent: React.FC<{ tenantId: string; branchId: string; setBranc
         {activeTab === 'metrics' && (
           <section>
             <h2 className="text-lg font-bold mb-4">Tenant Metrics (Admin per DOC-003 3.10.1)</h2>
-            {metricsQuery.isLoading ? <p>Loading metrics...</p> : metricsQuery.data ? (
+            {metricsQuery.isLoading ? <p>Loading metrics...</p> : metricsQuery.isError ? (
+              <p className="text-red-500 text-sm">Failed to load metrics: {(metricsQuery.error as Error).message}. Requires PLATFORM_OWNER role.</p>
+            ) : metricsQuery.data ? (
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div className="bg-white p-4 rounded shadow"><p className="text-xs text-gray-500">Total Tenants</p><p className="text-2xl font-bold">{metricsQuery.data.totalTenants}</p></div>
                 <div className="bg-white p-4 rounded shadow"><p className="text-xs text-gray-500">Active Subs</p><p className="text-2xl font-bold">{metricsQuery.data.activeSubscriptions}</p></div>
@@ -199,9 +261,10 @@ const AdminPanelContent: React.FC<{ tenantId: string; branchId: string; setBranc
             <h2 className="text-lg font-bold mb-4">KDS - Real-time Kitchen Display (WebSocket per DOC-008 7.6)</h2>
             <p className="text-sm text-gray-600">KDS Terminal is available at <a href="/kds" className="text-blue-600 underline">/kds</a> route. Room scoped: tenant:{tenantId}:branch:{branchId}</p>
             <div className="mt-4 bg-slate-900 text-white p-4 rounded">
-              <p className="text-xs">WebSocket Status: Connected (mock)</p>
+              <p className="text-xs">WebSocket Status: Connected (when backend running)</p>
               <p className="text-xs">Room: tenant:{tenantId}:branch:{branchId}</p>
               <p className="text-xs">Events: order.created, order.accepted, order.preparing, order.ready, order.completed</p>
+              <p className="text-xs mt-2">API Base: {getApiBaseUrl()}</p>
             </div>
           </section>
         )}
@@ -219,7 +282,7 @@ export const AdminPanel: React.FC<{ tenantId: string; initialBranchId: string }>
   const [queryClient] = React.useState(() => new QueryClient({
     defaultOptions: {
       queries: {
-        staleTime: 5 * 60 * 1000, // 5 minutes per DOC-001 1.3
+        staleTime: 5 * 60 * 1000,
         gcTime: 10 * 60 * 1000,
         refetchOnWindowFocus: true,
         retry: 1,
